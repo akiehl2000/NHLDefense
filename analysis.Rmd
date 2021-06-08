@@ -1,0 +1,314 @@
+---
+title: "Point Shares Analysis"
+author: "Adam Kiehl"
+date: "7/10/20"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+library(tidyverse)
+library(lmtest)
+library(pscl)
+library(ResourceSelection)
+library(WebPower)
+```
+
+```{r}
+team_playoffs <- read_csv('./data/team_playoffs.csv')
+team_reg <- read_csv('./data/team_reg.csv')
+skaters_playoffs <- read_csv('./data/skaters_playoffs.csv')
+skaters_reg <- read_csv('./data/skaters_reg.csv')
+goalies_playoffs <- read_csv('./data/goalies_playoffs.csv')
+goalies_reg <- read_csv('./data/goalies_reg.csv')
+```
+
+## Point Share Exploratory Analysis
+
+Serves as a validation for team point shares being a reasonable estimator of team points. 
+```{r}
+ggplot(team_playoffs) +
+  geom_point(aes(x = team, y = points, color = 'Points')) +
+  geom_point(aes(x = team, y = team.ps, color = 'Point Shares')) +
+  geom_hline(yintercept = mean(team_playoffs$points), color = 'turquoise3') +
+  geom_hline(yintercept = mean(team_playoffs$team.ps), color = 'salmon') +
+  facet_wrap(~ year) +
+  scale_color_manual(values = c('Points' = 'turquoise3', 'Point Shares' = 'salmon')) +
+  theme(axis.text.x = element_blank(), legend.position = 'bottom') +
+  labs(title = 'Point/Point Share Comparison', x = 'Team', y = 'Points', color = 'Legend')
+```
+```{r}
+ggplot(team_playoffs) +
+  geom_point(aes(x = team, y = (team.ps - points)), color = 'salmon') +
+  geom_hline(yintercept = mean((team_playoffs$team.ps - team_playoffs$points)), color = 'salmon') +
+  facet_wrap(~ year) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = 'Point Share/Point Comparison', x = 'Team', y = 'Team Point Shares - Team Points', color = 'Legend')
+```
+```{r}
+team_playoffs %>%
+  group_by(year) %>%
+  summarize(pts = mean(points), shrs = mean(team.ps)) %>%
+  summarize(pts = mean(pts), shrs = mean(shrs))
+```
+
+The following two plots serve as a validation of the general distribution of calculated DPS, GPS, and OPS values by comparing with Sports Reference's calculated values. 
+```{r}
+ggplot() +
+  geom_histogram(aes(x = skaters_reg$dps.sr, fill = 'DPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = skaters_reg$ops.sr, fill = 'OPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = goalies_reg$gps.sr, fill = 'GPS'), binwidth = .1, alpha = .6) +
+  scale_y_log10() +
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Regular Season DPS, GPS, and OPS Distribution', x = 'Point Shares', y = 'Log-Adjusted Frequency', subtitle = 
+         'Calculated by Sports Reference')
+```
+```{r}
+ggplot() +
+  geom_histogram(aes(x = skaters_reg$dps, fill = 'DPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = skaters_reg$ops, fill = 'OPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = goalies_reg$gps, fill = 'GPS'), binwidth = .1, alpha = .6) +
+  scale_y_log10() +
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Regular Season DPS, GPS, and OPS Distribution', x = 'Point Shares', y = 'Log-Adjusted Frequency', subtitle = 
+         'Calculated by Personal Script')
+```
+```{r}
+ggplot() +
+  geom_density(aes(x = (skaters_reg$dps.sr - skaters_reg$dps), fill = 'DPS'), binwidth = 1, alpha = .6) +
+  geom_density(aes(x = (skaters_reg$ops.sr - skaters_reg$ops), fill = 'OPS'), binwidth = 1, alpha = .6) +
+  geom_density(aes(x = (goalies_reg$gps.sr - goalies_reg$gps), fill = 'GPS'), binwidth = 1, alpha = .6) +
+  # scale_y_log10() +
+  theme(legend.position = 'bottom') + 
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Calculated Regular Season DPS, GPS, and OPS Deviations', x = 'Point Shares Deviation', y = 'Density')
+```
+
+Shows the distribution of calculated individual playoff DPS, GPS, and OPS scores for the playoffs.
+```{r}
+ggplot() +
+  geom_histogram(aes(x = skaters_playoffs$dps, fill = 'DPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = skaters_playoffs$ops, fill = 'OPS'), binwidth = .1, alpha = .6) +
+  geom_histogram(aes(x = goalies_playoffs$gps, fill = 'GPS'), binwidth = .1, alpha = .6) +
+  scale_y_log10() +
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Playoff DPS, GPS, and OPS Distribution', x = 'Point Shares', y = 'Log-Adjusted Frequency')
+```
+Joins regular season and playoff team data for graphical comparison. 
+```{r}
+team_full <- left_join(
+  team_playoffs,
+  team_reg, 
+  by = c('team' = 'team', 'year' = 'year'),
+  suffix = c('p', 'r')
+) %>%
+  filter(team.dpsr != 0, team.opsr != 0, team.gpsr != 0)
+```
+Plots regular season point shares against playoff point shares. 
+```{r}
+ggplot() +
+  geom_point(aes(x = team_full$team.dpsr, y = team_full$team.dpsp, size = team_full$winsp, color = 'DPS'), alpha = .33) +
+  geom_point(aes(x = team_full$team.opsr, y = team_full$team.opsp, size = team_full$winsp, color = 'OPS'), alpha = .33) +
+  geom_point(aes(x = team_full$team.gpsr, y = team_full$team.gpsp, size = team_full$winsp, color = 'GPS'), alpha = .33) +
+  scale_color_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  scale_size_continuous(name = 'Playoff Attainment', breaks = c(0, 4, 8, 12, 16), labels = c('First Round', 'Second Round', 
+                                                                                             'Conference Finals', 
+                                                                                             'Stanley Cup Finals', 
+                                                                                             'Stanley Cup Champions')) +
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0, ymax = Inf), fill = 'black', alpha = .15) + 
+  labs(title = 'Team Point Shares Scatter Plot', x = 'Regular Season Point Shares', y = 'Playoff Point Shares')
+```
+
+## Adjusted Point Share Proportions
+
+Shows the distribution of calculated adjusted team DPS as well as the distribution of Stanley Cup champions. 
+```{r}
+ggplot(team_playoffs) +
+  geom_histogram(aes(x = (dps.avg + gps.avg), fill = as.factor(champ)), binwidth = .1) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Distribution of Game-Adjusted DPS Values', x = 'Average DPS', y = 'Frequency', fill = 'Stanley Cup Champion')
+```
+Shows the distribution of calculated adjusted team OPS as well as the distribution of Stanley Cup champions. 
+```{r}
+ggplot(team_playoffs) +
+  geom_histogram(aes(x = ops.avg, fill = as.factor(champ)), binwidth = .1) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Distribution of Game-Adjusted OPS Values', x = 'Average OPS', y = 'Frequency', fill = 'Stanley Cup Champion')
+```
+Shows change in calculated adjusted team DPS and OPS proportion means over time.
+```{r}
+team_playoffs %>%
+  group_by(year) %>%
+  summarize(dps.avg = mean(dps.avg + gps.avg),
+            ops.avg = mean(ops.avg)) %>%
+  ggplot() +
+    geom_col(aes(x = year, y = dps.avg, fill = 'DPS'), alpha = .6) +
+    geom_col(aes(x = year, y = ops.avg, fill = 'OPS'), alpha = .6) +
+    scale_fill_manual(name = 'Position', values = c('red', 'green'), labels = c('DPS', 'OPS')) +
+    theme(panel.background = element_blank()) + 
+    labs(title = 'Yearly Adjusted Team DPS and OPS Means', x = 'Year', y = 'Seasonal Mean')
+    
+```
+Shows yearly calculated adjusted team DPS and OPS proportion maximums over time.
+```{r}
+team_playoffs %>%
+  group_by(year) %>%
+  summarize(dps.max = max(dps.avg + gps.avg),
+            ops.max = max(ops.avg)) %>%
+  ggplot() +
+    geom_col(aes(x = year, y = dps.max, fill = 'DPS'), alpha =.6) +
+    geom_col(aes(x = year, y = ops.max, fill = 'OPS'), alpha =.6) +
+    scale_fill_manual(name = 'Position', values = c('red', 'green'), labels = c('DPS', 'OPS')) +
+    theme(panel.background = element_blank()) + 
+    labs(title = 'Yearly Adjusted Team DPS and OPS Maximums', x = 'Year', y = 'Seasonal Max')
+```
+Shows yearly calculated adjusted team DPS and OPS proportion minimums over time.
+```{r}
+team_playoffs %>%
+  group_by(year) %>%
+  summarize(dps.max = max(-1 * (dps.avg + gps.avg)),
+            ops.max = max(-1 * ops.avg)) %>%
+  ggplot() +
+    geom_col(aes(x = year, y = dps.max, fill = 'DPS'), alpha = .75) +
+    geom_col(aes(x = year, y = ops.max, fill = 'OPS'), alpha = .75) +
+    scale_fill_manual(name = 'Position', values = c('red', 'green'), labels = c('DPS', 'OPS')) +
+    theme(panel.background = element_blank()) + 
+    labs(title = 'Yearly Adjusted Team DPS and OPS Minimums', x = 'Year', y = 'Seasonal Min')
+```
+
+## Game-Adjusted Average Point Shares
+
+Shows the game-adjusted average DPS, GPS, and OPS values for playoff teams. 
+```{r}
+ggplot(team_playoffs) +
+  geom_density(aes(x = dps.avg, fill = 'DPS'), binwidth = .1, alpha = .6) +
+  geom_density(aes(x = ops.avg, fill = 'OPS'), binwidth = .1, alpha = .6) +
+  geom_density(aes(x = gps.avg, fill = 'GPS'), binwidth = .1, alpha = .6) +
+  geom_vline(xintercept = mean(team_playoffs$dps.avg), color = 'red', alpha = .6) + 
+  geom_vline(xintercept = mean(team_playoffs$ops.avg), color = 'green', alpha = .6) +
+  geom_vline(xintercept = mean(team_playoffs$gps.avg), color = 'blue', alpha = .6) +
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank(), legend.position = 'bottom') + 
+  labs(title = 'Playoff Average DPS, GPS, and OPS', x = 'Point Shares', y = 'Density')
+```
+Combines average DPS and GPS. 
+```{r}
+ggplot(team_playoffs) +
+  geom_density(aes(x = (dps.avg + gps.avg), fill = 'DPS'), binwidth = .1, alpha = .6) +
+  geom_density(aes(x = ops.avg, fill = 'OPS'), binwidth = .1, alpha = .6) +
+  geom_vline(xintercept = mean((team_playoffs$dps.avg + team_playoffs$gps.avg)), color = 'red', alpha = .6) + 
+  geom_vline(xintercept = mean(team_playoffs$ops.avg), color = 'green', alpha = .6) +
+  scale_fill_manual(name = 'Position', values = c('red', 'green'), labels = c('DPS', 'OPS')) +
+  theme(panel.background = element_blank(), legend.position = 'bottom') + 
+  labs(title = 'Playoff Average DPS and OPS', x = 'Point Shares', y = 'Density')
+```
+Shows the game_adjusted average DPS, GPS, and OPS values for regular season teams.
+```{r}
+team_reg_temp <- team_reg %>%
+  filter((dps.avg != 0) & (ops.avg != 0))
+ggplot(team_reg_temp) +
+  geom_histogram(aes(x = dps.avg, fill = 'DPS'), binwidth = .05, alpha = .6) +
+  geom_histogram(aes(x = ops.avg, fill = 'OPS'), binwidth = .05, alpha = .6) +
+  geom_histogram(aes(x = gps.avg, fill = 'GPS'), binwidth = .05, alpha = .6) +
+  scale_fill_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  theme(panel.background = element_blank()) + 
+  labs(title = 'Regular Season Average DPS, GPS, and OPS Distribution', x = 'Point Shares', y = 'Frequency')
+```
+Plots average DPS per game against average OPS per game and includes temporal and playoff attainment data. 
+```{r}
+ggplot() +
+  geom_point(data = team_playoffs, aes(x = dps.avg, y = ops.avg, color = year, size = wins), alpha = .33) +
+  scale_size_continuous(name = 'Playoff Attainment', breaks = c(0, 4, 8, 12, 16), labels = c('First Round', 'Second Round', 
+                                                                                             'Conference Finals', 
+                                                                                             'Stanley Cup Finals', 
+                                                                                             'Stanley Cup Champions')) +
+  scale_color_continuous(name = 'Season', breaks = c(1999, 2004, 2009, 2014, 2019)) +
+  geom_point(data = team_playoffs, aes(x = mean(dps.avg), y = mean(ops.avg)), color = 'salmon') + 
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0, ymax = Inf), fill = 'black', alpha = .15) + 
+  labs(x = 'Average DPS per Game', y = 'Average OPS per Game', title = 'Average Playoff OPS/DPS per Game Visualization')
+```
+Plots average DPS per game against average OPS per game and includes temporal and playoff attainment data. DPS here includes GPS. 
+```{r}
+ggplot() +
+  geom_point(data = team_playoffs, aes(x = (dps.avg + gps.avg), y = ops.avg, color = year, size = wins), alpha = .33) +
+  scale_size_continuous(name = 'Playoff Attainment', breaks = c(0, 4, 8, 12, 16), labels = c('First Round', 'Second Round', 
+                                                                                             'Conference Finals', 
+                                                                                             'Stanley Cup Finals', 
+                                                                                             'Stanley Cup Champions')) +
+  scale_color_continuous(name = 'Season', breaks = c(1999, 2004, 2009, 2014, 2019)) +
+  geom_point(data = team_playoffs, aes(x = mean(dps.avg + gps.avg), y = mean(ops.avg)), color = 'salmon') + 
+  geom_abline(slope = 1, intercept = 0, color = 'salmon') +
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0, ymax = Inf), fill = 'black', alpha = .15) + 
+  labs(x = 'Average DPS per Game', y = 'Average OPS per Game', title = 'Average Playoff OPS/DPS per Game Visualization', subtitle =
+         'Mean shown in pink. GPS included in DPS metric.')
+```
+Plots game-adjusted regular season point shares against game-adjusted playoff point shares. 
+```{r}
+team_full <- team_full %>%
+  filter(((team_full$team.dpsr / team_full$gamesr) != 0) & ((team_full$team.dpsp / team_full$gamesp) != 0))
+ggplot() +
+  geom_point(aes(x = (team_full$team.dpsr / team_full$gamesr), y = (team_full$team.dpsp / team_full$gamesp), size = team_full$winsp,
+                 color = 'DPS'), alpha = .33) +
+  geom_point(aes(x = (team_full$team.opsr / team_full$gamesr), y = (team_full$team.opsp / team_full$gamesp), size = team_full$winsp,
+                 color = 'OPS'), alpha = .33) +
+  geom_point(aes(x = (team_full$team.gpsr / team_full$gamesr), y = (team_full$team.gpsp / team_full$gamesp), size = team_full$winsp,
+                 color = 'GPS'), alpha = .33) +
+  scale_size_continuous(name = 'Playoff Attainment', breaks = c(0, 4, 8, 12, 16), labels = c('First Round', 'Second Round', 
+                                                                                             'Conference Finals', 
+                                                                                             'Stanley Cup Finals', 
+                                                                                             'Stanley Cup Champions')) +
+  scale_color_manual(name = 'Position', values = c('red', 'blue', 'green'), labels = c('DPS', 'GPS', 'OPS')) +
+  geom_rect(aes(xmin = 0, xmax = Inf, ymin = 0, ymax = Inf), fill = 'black', alpha = .15) + 
+  labs(title = 'Regular Season vs. Playoff Team Point Shares per Game', x = 'Regular Season Point Shares per Game', y = 'Playoff Point Shares per Game')
+```
+
+## Regression
+
+Fits game-adjusted average point shares in a logistic regression model against a championship indicator.
+```{r}
+avg3_fit <- glm(champ ~ dps.avg + gps.avg + ops.avg, data = team_playoffs, family = binomial())
+summary(avg3_fit)
+exp(coef(avg3_fit))
+```
+Now combines average DPS and average GPS. 
+```{r}
+team_playoffs$dcomb = team_playoffs$dps.avg + team_playoffs$gps.avg
+avg2_fit <- glm(champ ~ dcomb + ops.avg, data = team_playoffs, family = binomial())
+summary(avg2_fit)
+exp(coef(avg2_fit)[2:3])
+exp(summary(avg2_fit)$coefficients[2:3,3])
+```
+GPS should be combined with DPS according to a Likelihood Ratio Test comparing the two above models. 
+```{r}
+lrtest(avg3_fit, avg2_fit)
+```
+Nither dcomb nor ops.avg can be removed from the model without hurting its goodness of fit according to a Likelihood Ratio Test between the full and reduced models ($H_{0}:Reduced\ Model$).
+```{r}
+avg1_fit <- glm(champ ~ ops.avg, data = team_playoffs, family = binomial())
+lrtest(avg2_fit, avg1_fit)
+avg1_fit <- glm(champ ~ dcomb, data = team_playoffs, family = binomial())
+lrtest(avg2_fit, avg1_fit)
+```
+A pseudo-$R^{2}$ metric is calculated called McFadden's R-squared.
+```{r}
+pR2(avg2_fit)[4]
+```
+A Hosmer-Lemeshow Test confirms the model is a good fit for the data. 
+```{r}
+hoslem.test(team_playoffs$champ, fitted(avg2_fit), g=10)
+```
+Finally, a power calculation is performed. 
+```{r}
+n <- 320
+p0 <- predict(avg2_fit, newdata = data.frame(dcomb = 0, ops.avg = 0), type = 'response')
+p1 <- predict(avg2_fit, newdata = data.frame(dcomb = 1, ops.avg = 1), type = 'response')
+wp.logistic(n = seq(100, 1000, 100), p0, p1)
+```
